@@ -1,0 +1,14 @@
+# Settings for events-agent. API keys go in .env, not here.
+
+model = "claude-opus-5-5"
+effort = "medium"      # low | medium | high: how hard Claude thinks on each chat turn
+days_ahead = 60        # how far ahead sources look
+
+[location]
+city = "Portland"
+state = "OR"
+country = "US"
+latitude = 45.5152
+longitude = -122.6784
+radius_miles = 30
+timezone = "America/Los_Angeles"
