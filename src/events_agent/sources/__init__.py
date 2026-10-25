@@ -39,7 +39,17 @@ Fetcher = Callable[[dict[str, Any], FetchContext], list[Event]]
 
 
 def _fetchers() -> dict[str, Fetcher]:
-    from events_agent.sources import ical, mcmenamins, omsi, ticketmaster, tmdb, webpage
+    from events_agent.sources import (
+        crowdwork,
+        ical,
+        mcmenamins,
+        omsi,
+        seatengine,
+        ticketmaster,
+        tmdb,
+        tribe,
+        webpage,
+    )
 
     return {
         "ticketmaster": ticketmaster.fetch,
@@ -48,10 +58,23 @@ def _fetchers() -> dict[str, Fetcher]:
         "webpage": webpage.fetch,
         "mcmenamins": mcmenamins.fetch,
         "omsi": omsi.fetch,
+        "seatengine": seatengine.fetch,
+        "crowdwork": crowdwork.fetch,
+        "tribe": tribe.fetch,
     }
 
 
-SOURCE_KINDS = ("ticketmaster", "tmdb", "ical", "webpage", "mcmenamins", "omsi")
+SOURCE_KINDS = (
+    "ticketmaster",
+    "tmdb",
+    "ical",
+    "webpage",
+    "mcmenamins",
+    "omsi",
+    "seatengine",
+    "crowdwork",
+    "tribe",
+)
 
 
 @dataclass

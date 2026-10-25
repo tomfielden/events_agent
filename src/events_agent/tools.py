@@ -23,6 +23,7 @@ from events_agent.store import REACTIONS, Store
 
 Category = Literal[CATEGORIES]  # type: ignore[valid-type]
 Reaction = Literal[tuple(REACTIONS)]  # type: ignore[valid-type]
+SourceKind = Literal[sources.SOURCE_KINDS]  # type: ignore[valid-type]
 
 
 class AgentContext:
@@ -93,7 +94,7 @@ class RecordReaction(BaseModel):
 
 class AddSource(BaseModel):
     name: str = Field(description="Short unique name, e.g. 'SF Symphony'")
-    kind: Literal["ticketmaster", "tmdb", "ical", "webpage", "mcmenamins", "omsi"]
+    kind: SourceKind
     url: str = Field("", description="Page or feed URL; not needed for ticketmaster or tmdb")
     config: dict[str, Any] = Field(
         default_factory=dict,
@@ -329,7 +330,10 @@ TOOLS = [
         "Add a new place to pull events from. kinds: 'webpage' (any page listing events), "
         "'ical' (.ics calendar feed), 'ticketmaster' (Ticketmaster API, local events), "
         "'tmdb' (movies in theaters), 'mcmenamins' (McMenamins theater showtimes; config "
-        "{theaters: [page paths]}), 'omsi' (OMSI films, planetarium and events). "
+        "{theaters: [page paths]}), 'omsi' (OMSI films, planetarium and events), "
+        "'seatengine' (comedy clubs on SeatEngine, url = club site), 'crowdwork' (comedy "
+        "theaters on Crowdwork; config {theatre: slug, venue}), 'tribe' (WordPress sites "
+        "using The Events Calendar plugin, url = site; try it before 'webpage'). "
         "Prefer an iCal feed when a site offers one.",
         AddSource,
         add_source,

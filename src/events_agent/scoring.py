@@ -51,6 +51,30 @@ def _matches(subject: str, event: dict[str, Any], haystack: str) -> bool:
     return re.search(rf"\b{re.escape(stem)}", haystack) is not None
 
 
+def _norm_title(title: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", " ", title.lower()).strip()
+
+
+def dedupe(ranked: list[Scored]) -> list[Scored]:
+    """Drop the same show listed by two sources (e.g. Ticketmaster and the club's own site).
+
+    Two events are the same if they start at the same time and one title contains the
+    other ("Caitlin Peluffo" vs "Special Event: Caitlin Peluffo"). The better-ranked copy
+    is kept.
+    """
+    kept: list[Scored] = []
+    by_start: dict[str, list[str]] = {}
+    for r in ranked:
+        start = r.event["start_at"]
+        title = _norm_title(r.event["title"])
+        others = by_start.setdefault(start, [])
+        if title and any(title in o or o in title for o in others):
+            continue
+        others.append(title)
+        kept.append(r)
+    return kept
+
+
 def rank(
     events: list[dict[str, Any]],
     preferences: list[dict[str, Any]],
@@ -113,4 +137,4 @@ def rank(
         results.append(s)
 
     results.sort(key=lambda r: (-r.score, r.event["start_at"]))
-    return results
+    return dedupe(results)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -84,7 +85,11 @@ def cmd_add_source(settings: Settings, args: argparse.Namespace) -> None:
     if args.kind not in sources.SOURCE_KINDS:
         sys.exit(f"kind must be one of {', '.join(sources.SOURCE_KINDS)}")
     store = open_store(settings)
-    sid = store.add_source(args.name, args.kind, args.url or "")
+    try:
+        config = json.loads(args.options) if args.options else {}
+    except json.JSONDecodeError as exc:
+        sys.exit(f"--options must be JSON: {exc}")
+    sid = store.add_source(args.name, args.kind, args.url or "", config)
     print(f"Added source {sid}. Fetching...")
     for result in sources.refresh(store, settings, [sid]):
         print(result)
@@ -157,6 +162,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("name")
     p.add_argument("kind", help=" | ".join(sources.SOURCE_KINDS))
     p.add_argument("url", nargs="?")
+    p.add_argument(
+        "--options", help='source settings as JSON, e.g. \'{"theatre": "kickstandcomedy"}\''
+    )
     p = sub.add_parser("upcoming", help="ranked upcoming events, without Claude")
     p.add_argument("--days", type=int, default=14)
     p.add_argument("--limit", type=int, default=30)

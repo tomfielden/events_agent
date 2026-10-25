@@ -360,3 +360,79 @@ def test_claude_extraction_is_cached(store: Store, monkeypatch: pytest.MonkeyPat
     assert len(calls) == 2  # the unchanged page was served from the cache
     assert first[0].title == again[0].title == changed[0].title == "Laser Show"
     assert first[0].end == day(20)
+
+
+def test_same_show_from_two_sources_is_shown_once(store: Store) -> None:
+    tm = store.add_source("tm", "ticketmaster")
+    club = store.add_source("club", "seatengine", "https://club.example")
+    when = datetime.combine(day(4), datetime.min.time()).replace(hour=19, minute=30)
+    store.upsert_events(tm, [Event("Caitlin Peluffo", when, "comedy", venue="Club - Portland")])
+    store.upsert_events(
+        club,
+        [
+            Event("Special Event: Caitlin Peluffo", when, "comedy", venue="Club"),
+            Event("Caitlin Peluffo", when.replace(hour=21), "comedy", venue="Club"),  # late show
+        ],
+    )
+    ranked = rank(store.find_events(TODAY.isoformat(), day(10).isoformat()), [], [])
+    assert len(ranked) == 2
+
+
+def test_seatengine_first_day_guesses_year() -> None:
+    from events_agent.sources.seatengine import _first_day
+
+    assert _first_day("May 13 - May 16", date(2026, 10, 24)) == date(2027, 5, 13)
+    assert _first_day("October 24", date(2026, 10, 24)) == date(2026, 10, 24)
+    assert _first_day("TBA", date(2026, 10, 24)) is None
+
+
+def test_crowdwork_show_to_events() -> None:
+    from events_agent.sources import crowdwork
+
+    show = {
+        "id": 7,
+        "name": "Harold Night ",
+        "recurring": "Weekly",
+        "url": "https://cw.example/e/h",
+        "dates": [f"{day(-7)}T20:30:00.000-07:00", f"{day(3)}T20:30:00.000-07:00"],
+        "description_short": "Long-form improv\xa0teams.",
+        "tags": {"public": ["Improv"]},
+        "cost_tiers": [{"cost": 1000}, {"cost": 1500}],
+        "venue": "",
+        "theatre": {"name": "Kickstand Comedy "},
+    }
+    events = crowdwork.to_events(show, {}, ctx_for(Settings()))
+    assert len(events) == 1  # last week's date is dropped
+    ev = events[0]
+    assert ev.title == "Harold Night" and ev.venue == "Kickstand Comedy"
+    assert ev.price == "$10-$15" and ev.description == "Long-form improv teams."
+    assert ev.tags == ["Improv", "weekly show", "comedy"]
+
+
+def test_tribe_event_mapping() -> None:
+    from events_agent.sources import tribe
+
+    item = {
+        "id": 10259,
+        "title": "GuignolFest 2026: Ghouls &#038; Ghosts",
+        "url": "https://cstpdx.com/event/guignolfest/",
+        "all_day": False,
+        "start_date": f"{day(2)} 13:30:00",
+        "end_date": f"{day(2)} 16:00:00",
+        "timezone": "America/Los_Angeles",
+        "cost": "$20",
+        "excerpt": "<p>Short horror&nbsp;films</p>",
+        "categories": [{"name": "Film"}],
+        "tags": [{"name": "horror"}],
+        "venue": {
+            "venue": "Clinton Street Theater",
+            "address": "2522 SE Clinton St",
+            "city": "Portland",
+        },
+    }
+    ev = tribe.to_event(item, {}, ctx_for(Settings()))
+    assert ev.title == "GuignolFest 2026: Ghouls & Ghosts"
+    assert ev.category == "movie" and ev.tags == ["film", "horror"]
+    assert ev.venue == "Clinton Street Theater" and ev.address == "2522 SE Clinton St, Portland"
+    assert isinstance(ev.start, datetime) and ev.start.hour == 13 and ev.start.tzinfo is not None
+    assert ev.description == "Short horror films" and ev.price == "$20"
