@@ -436,3 +436,78 @@ def test_tribe_event_mapping() -> None:
     assert ev.venue == "Clinton Street Theater" and ev.address == "2522 SE Clinton St, Portland"
     assert isinstance(ev.start, datetime) and ev.start.hour == 13 and ev.start.tzinfo is not None
     assert ev.description == "Short horror films" and ev.price == "$20"
+
+
+MICRODATA_CARD = """
+<div class="event" itemscope itemtype="http://schema.org/Event">
+  <meta itemprop="startDate" content="{start}">
+  <a href="https://tix.example/p/1"><h3 itemprop="name">Theo Katzman</h3></a>
+  <div class="event-venue">- Aladdin Theater -</div>
+</div>
+"""
+
+
+def test_microdata_with_mislabeled_local_times(monkeypatch: pytest.MonkeyPatch) -> None:
+    card = MICRODATA_CARD.format(start=f"{day(2)}T20:00:00+00:00")
+    html = card + card  # same show in two layouts
+    events = webpage.parse_microdata(html, "https://venue.example/")
+    assert len(events) == 1
+    assert events[0].venue == "Aladdin Theater" and events[0].url == "https://tix.example/p/1"
+
+    class Resp:
+        status_code, text = 200, html
+
+        def raise_for_status(self) -> None:
+            pass
+
+    monkeypatch.setattr(webpage, "allowed_by_robots", lambda url, ctx: True)
+    ctx = ctx_for(Settings())
+    monkeypatch.setattr(ctx.http, "get", lambda url: Resp())
+    source = {"url": "https://venue.example/", "config": {"times_are_local": True}}
+    ev = webpage.fetch(source, ctx)[0]
+    assert isinstance(ev.start, datetime)
+    assert ev.start.hour == 20 and ev.start.utcoffset() == TZ.utcoffset(ev.start)
+
+
+def test_dedupe_same_venue_shared_name(store: Store) -> None:
+    a = store.add_source("a", "ticketmaster")
+    b = store.add_source("b", "webpage", "https://x")
+    when = datetime.combine(day(4), datetime.min.time()).replace(hour=20)
+    store.upsert_events(
+        a,
+        [
+            Event("The Aces w/ Gatlin", when, "music", venue="Aladdin Theater"),
+            Event(
+                "Warren Miller's Days Off", when.replace(hour=13), "movie", venue="Aladdin Theater"
+            ),
+            Event("Jazz Trio", when, "music", venue="Other Club"),
+        ],
+    )
+    store.upsert_events(
+        b,
+        [
+            Event(
+                "Introducing The Aces with special guest Gatlin",
+                when,
+                "music",
+                venue="Aladdin Theater",
+            ),
+            Event(
+                'Warren Miller\'s "Days Off"',
+                when.replace(hour=13),
+                "movie",
+                venue="Aladdin Theater",
+            ),
+            Event("Jazz Night Live", when, "music", venue="Aladdin Theater"),  # different show
+        ],
+    )
+    titles = sorted(
+        r.event["title"]
+        for r in rank(store.find_events(TODAY.isoformat(), day(10).isoformat()), [], [])
+    )
+    assert titles == [
+        "Jazz Night Live",
+        "Jazz Trio",
+        "The Aces w/ Gatlin",
+        "Warren Miller's Days Off",
+    ]

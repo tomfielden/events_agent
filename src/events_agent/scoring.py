@@ -51,26 +51,70 @@ def _matches(subject: str, event: dict[str, Any], haystack: str) -> bool:
     return re.search(rf"\b{re.escape(stem)}", haystack) is not None
 
 
-def _norm_title(title: str) -> str:
-    return re.sub(r"[^a-z0-9 ]+", " ", title.lower()).strip()
+def _norm(text: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9 ]+", " ", text.lower()).split())
+
+
+# Words that don't identify a show.
+COMMON_WORDS = {
+    "with",
+    "and",
+    "the",
+    "tour",
+    "live",
+    "show",
+    "presents",
+    "special",
+    "guest",
+    "guests",
+    "introducing",
+    "featuring",
+    "night",
+    "world",
+    "north",
+    "america",
+    "american",
+    "concert",
+    "tribute",
+    "event",
+    "evening",
+    "sold",
+    "out",
+    "2025",
+    "2026",
+    "2027",
+    "2028",
+}
+
+
+def _key_words(title: str) -> set[str]:
+    return {w for w in title.split() if len(w) >= 4 and w not in COMMON_WORDS}
+
+
+def _same_show(a: tuple[str, str], b: tuple[str, str]) -> bool:
+    (title_a, venue_a), (title_b, venue_b) = a, b
+    if title_a in title_b or title_b in title_a:
+        return True
+    same_venue = bool(venue_a and venue_b) and (venue_a in venue_b or venue_b in venue_a)
+    return same_venue and bool(_key_words(title_a) & _key_words(title_b))
 
 
 def dedupe(ranked: list[Scored]) -> list[Scored]:
-    """Drop the same show listed by two sources (e.g. Ticketmaster and the club's own site).
+    """Drop the same show listed by two sources (e.g. Ticketmaster and the venue's site).
 
-    Two events are the same if they start at the same time and one title contains the
-    other ("Caitlin Peluffo" vs "Special Event: Caitlin Peluffo"). The better-ranked copy
-    is kept.
+    Two listings are the same show if they start at the same minute and either one title
+    contains the other ("Caitlin Peluffo" / "Special Event: Caitlin Peluffo"), or they're
+    at the same venue and share a distinctive word ("The Aces w/ Gatlin" / "Introducing
+    The Aces with special guest Gatlin"). The better-ranked copy is kept.
     """
     kept: list[Scored] = []
-    by_start: dict[str, list[str]] = {}
+    by_start: dict[str, list[tuple[str, str]]] = {}
     for r in ranked:
-        start = r.event["start_at"]
-        title = _norm_title(r.event["title"])
-        others = by_start.setdefault(start, [])
-        if title and any(title in o or o in title for o in others):
+        me = (_norm(r.event["title"]), _norm(r.event.get("venue") or ""))
+        others = by_start.setdefault(r.event["start_at"], [])
+        if me[0] and any(_same_show(me, o) for o in others):
             continue
-        others.append(title)
+        others.append(me)
         kept.append(r)
     return kept
 

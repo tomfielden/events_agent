@@ -1,13 +1,14 @@
 """Any web page that lists events.
 
-1. Look for schema.org Event data embedded as JSON-LD (most ticketing and venue sites
-   include it for search engines). This is free and exact.
+1. Look for schema.org Event data, which most ticketing and venue sites include for
+   search engines: JSON-LD first, then microdata (itemprop attributes). Free and exact.
 2. If there is none, send the page's text to Claude and ask it to pull out the events.
 
 Source config (all optional):
   {"mode": "auto" | "jsonld" | "llm",
    "category": "family",          # default category for this site
    "venue": "The Fillmore",        # default venue for this site
+   "times_are_local": true,        # site labels local times as UTC (+00:00); fix that
    "instructions": "Only the kids' programs"}   # extra hint for Claude
 """
 
@@ -46,17 +47,25 @@ def fetch(source: dict[str, Any], ctx: FetchContext) -> list[Event]:
 
     events: list[Event] = []
     if mode in ("auto", "jsonld"):
-        events = parse_jsonld(html, url)
+        events = parse_jsonld(html, url) or parse_microdata(html, url)
     if not events and mode in ("auto", "llm"):
         events = extract_with_claude(html, url, cfg, ctx)
 
     start, end = ctx.window
     for ev in events:
+        if cfg.get("times_are_local"):
+            ev.start = _as_local(ev.start, ctx)
+            ev.end = _as_local(ev.end, ctx) if ev.end else None
         if cfg.get("category") and ev.category == "other":
             ev.category = cfg["category"]
         if cfg.get("venue") and not ev.venue:
             ev.venue = cfg["venue"]
     return [ev for ev in events if start <= _day(ev.end or ev.start) and _day(ev.start) <= end]
+
+
+def _as_local(value: datetime | date, ctx: FetchContext) -> datetime | date:
+    """Keep the wall-clock time but treat it as local (for sites that mislabel the zone)."""
+    return value.replace(tzinfo=ctx.tz) if isinstance(value, datetime) else value
 
 
 def _day(value: datetime | date) -> date:
@@ -197,6 +206,65 @@ def _jsonld_event(obj: dict[str, Any], base_url: str, types: list[str]) -> Event
         image_url=_text(obj.get("image")),
         tags=[t for t in (_text(p) for p in performers) if t],
     )
+
+
+# ---- microdata -----------------------------------------------------------------
+
+
+def parse_microdata(html: str, base_url: str) -> list[Event]:
+    """Events marked up with itemscope/itemtype="http://schema.org/...Event" attributes."""
+    soup = BeautifulSoup(html, "html.parser")
+    events: list[Event] = []
+    seen: set[tuple[str, str]] = set()
+    for el in soup.select("[itemscope][itemtype]"):
+        if not str(el["itemtype"]).rstrip("/").endswith("Event"):
+            continue
+
+        def prop(name: str, scope: Any = el) -> Any:
+            return scope.find(attrs={"itemprop": name})
+
+        start_el, name_el = prop("startDate"), prop("name")
+        if start_el is None or name_el is None:
+            continue
+        try:
+            start = parse_when(
+                str(
+                    start_el.get("content")
+                    or start_el.get("datetime")
+                    or start_el.get_text(strip=True)
+                )
+            )
+        except (ValueError, TypeError):
+            continue
+        title = name_el.get("content") or name_el.get_text(" ", strip=True)
+        if (title, str(start)) in seen:  # feeds often repeat a card in two layouts
+            continue
+        seen.add((title, str(start)))
+
+        location = prop("location")
+        if location is not None:
+            loc_name = prop("name", location)
+            venue = (loc_name or location).get_text(" ", strip=True)
+        else:
+            # No location markup: fall back to an element whose class mentions "venue".
+            venue_el = el.find(class_=lambda c: bool(c) and "venue" in str(c))
+            venue = venue_el.get_text(" ", strip=True) if venue_el else ""
+        url_el = prop("url")
+        link = url_el.get("href") or url_el.get("content") if url_el is not None else None
+        if not link:
+            a = el.find("a", href=True)
+            link = a["href"] if a else ""
+        desc_el = prop("description")
+        events.append(
+            Event(
+                title=str(title),
+                start=start,
+                venue=venue.strip(" -\u2013\u2014"),  # "- Crystal Ballroom -"
+                description=desc_el.get_text(" ", strip=True) if desc_el is not None else "",
+                url=urljoin(base_url, str(link)) if link else base_url,
+            )
+        )
+    return events
 
 
 # ---- Claude extraction ---------------------------------------------------------

@@ -203,7 +203,7 @@ class Store:
         end: str,
         categories: list[str] | None = None,
         text: str | None = None,
-        limit: int = 500,
+        limit: int = 20_000,  # ranking is cheap; never silently drop later events
     ) -> list[dict[str, Any]]:
         """Events starting in [start, end] (local ISO dates or datetimes)."""
         sql = [
